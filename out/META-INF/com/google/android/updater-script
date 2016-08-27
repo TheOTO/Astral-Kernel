@@ -1,0 +1,17 @@
+ui_print("***********************************");
+ui_print("---------- Blaze™ Kernel --------");
+ui_print("***********************************");
+ui_print("1) Preparing the files");
+package_extract_dir("tools", "/tmp");
+set_perm(0, 0, 0777, "/tmp/mkbootimg");
+set_perm(0, 0, 0777, "/tmp/unpackbootimg");
+set_perm(0, 0, 0777, "/tmp/flash_kernel.sh");
+ui_print("2) Flashing the repacked boot.img");
+run_program("/tmp/flash_kernel.sh");
+ui_print("3) Cleaning the temporary files");
+delete("/tmp/boot.img");
+delete("/tmp/mkbootimg");
+delete("/tmp/unpackbootimg");
+delete("/tmp/flash_kernel.sh");
+ui_print("Support me @xda-developers..!");
+unmount("/system");
