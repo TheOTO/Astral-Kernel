@@ -574,6 +574,12 @@ config MSM_PERFORMANCE_HOTPLUG_ON
 config STATE_NOTIFIER
 		bool "State Notifier"
 
+config FORCE_FAST_CHARGE
+	bool "Force faster charge rate for AC/USB"
+	default y
+ 	help
+	  This allows users to override default charge rate for both USB and AC
+	  charger input current
 
 source "drivers/soc/qcom/memshare/Kconfig"
 

@@ -51,6 +51,11 @@
 
 #include <linux/msm-bus.h>
 #include"../gadget/huawei_usb.h"
+
+#ifdef CONFIG_FORCE_FAST_CHARGE
+	#include <linux/fastchg.h>
+#endif
+
 #define MSM_USB_BASE	(motg->regs)
 #define MSM_USB_PHY_CSR_BASE (motg->phy_csr_regs)
 
@@ -1882,6 +1887,14 @@ static void msm_otg_notify_charger(struct msm_otg *motg, unsigned mA)
 
 	if (motg->cur_power == mA)
 		return;
+#ifdef CONFIG_FORCE_FAST_CHARGE
+	if (force_fast_charge > 0 && mA > 0) {
+		mA = IDEV_ACA_CHG_MAX;
+		pr_info("USB fast charging is ON\n");
+	} else {
+		pr_info("USB fast charging is OFF\n");
+	}
+#endif
 
 	usb_dev_info(motg->phy.dev, "Avail curr from USB = %u\n", mA);
 
@@ -2769,7 +2782,7 @@ static const char *chg_to_string(enum usb_chg_type chg_type)
 #else
 #define MSM_CHG_DCD_TIMEOUT		(750 * HZ/1000) /* 750 msec */
 #endif
-/* DTS2014072309079 sunwenyong 20140724 end>¡¡*/
+/* DTS2014072309079 sunwenyong 20140724 end>\A1\A1*/
 #define MSM_CHG_DCD_POLL_TIME		(50 * HZ/1000) /* 50 msec */
 #define MSM_CHG_PRIMARY_DET_TIME	(50 * HZ/1000) /* TVDPSRC_ON */
 #define MSM_CHG_SECONDARY_DET_TIME	(50 * HZ/1000) /* TVDMSRC_ON */
