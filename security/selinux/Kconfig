@@ -65,19 +65,29 @@ config SECURITY_SELINUX_DEVELOP
 	  can interactively toggle the kernel between enforcing mode and
 	  permissive mode (if permitted by the policy) via /selinux/enforce.
 
-config SECURITY_SELINUX_ALWAYS_ENFORCE
-	bool "NSA SELinux Always Enforcing"
+choice
+	prompt "Permanent SELinux status"
 	depends on SECURITY_SELINUX_DEVELOP
-	default n
+	default SECURITY_SELINUX_NO_ENFORCE
+	help
+	  This option allows you to permanently set SELinux status.
+
+config SECURITY_SELINUX_NO_ENFORCE
+	bool "Disabled"
+	help
+	  Disable this feature. Allows users to set their desired SELinux status.
+
+config SECURITY_SELINUX_ALWAYS_ENFORCE
+	bool "Enforcing"
 	help
 	  This option will prevent anything from setting SELinux to permissive.
 
 config SECURITY_SELINUX_NEVER_ENFORCE
-	bool "NSA SELinux Never Enforcing"
-	depends on SECURITY_SELINUX_DEVELOP
-	default n
+	bool "Permissive"
 	help
 	  This option will prevent anything from setting SELinux to enforcing.
+
+endchoice
 
 config SECURITY_SELINUX_AVC_STATS
 	bool "NSA SELinux AVC Statistics"
