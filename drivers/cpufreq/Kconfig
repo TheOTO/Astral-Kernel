@@ -49,6 +49,13 @@ config CPU_FREQ_STAT_DETAILS
 	  This will show detail CPU frequency translation table in sysfs file
 	  system.
 
+config FINGERPRINT_BOOST
+	bool "Fingerprint Boost"
+	default y
+	help
+	  Boosts available CPUs to max frequency on fingerprint sensor input
+
+
 	  If in doubt, say N.
 
 choice
