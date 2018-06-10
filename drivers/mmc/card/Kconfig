@@ -129,7 +129,7 @@ config HW_SD_HEALTH_DETECT
 	help
 	  This is an option to diag sd health status.
 config HW_EMMC_PHYSICS_PROTECT
-      bool " EMMC PHYSICS PROTEC"
+      bool "EMMC PHYSICS PROTEC"
       default y
       help
       This is an option to protect emmc physic.
