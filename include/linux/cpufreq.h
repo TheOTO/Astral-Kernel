@@ -16,7 +16,6 @@
 #include <linux/kobject.h>
 #include <linux/notifier.h>
 #include <linux/sysfs.h>
-#include <asm/cputime.h>
 
 /*********************************************************************
  *                        CPUFREQ INTERFACE                          *
@@ -100,6 +99,8 @@ struct cpufreq_policy {
 	 *     __cpufreq_governor(data, CPUFREQ_GOV_POLICY_EXIT);
 	 */
 	struct rw_semaphore	rwsem;
+
+	unsigned int 		util;
 };
 
 /* Only for ACPI */
@@ -128,8 +129,6 @@ static inline bool policy_is_shared(struct cpufreq_policy *policy)
 extern struct kobject *cpufreq_global_kobject;
 int cpufreq_get_global_kobject(void);
 void cpufreq_put_global_kobject(void);
-int cpufreq_sysfs_create_file(const struct attribute *attr);
-void cpufreq_sysfs_remove_file(const struct attribute *attr);
 
 #ifdef CONFIG_CPU_FREQ
 unsigned int cpufreq_get(unsigned int cpu);
@@ -162,9 +161,9 @@ static inline void disable_cpufreq(void) { }
  *                      CPUFREQ DRIVER INTERFACE                     *
  *********************************************************************/
 
-#define CPUFREQ_RELATION_L 0  /* lowest frequency at or above target */
-#define CPUFREQ_RELATION_H 1  /* highest frequency below or at target */
-#define CPUFREQ_RELATION_C 2  /* closest frequency to target */
+#define CPUFREQ_RELATION_L 0 /* lowest frequency at or above target */
+#define CPUFREQ_RELATION_H 1 /* highest frequency below or at target */
+#define CPUFREQ_RELATION_C 2 /* closest frequency to target */
 
 struct freq_attr {
 	struct attribute attr;
@@ -222,7 +221,7 @@ struct cpufreq_driver {
 
 	/* optional */
 	int	(*bios_limit)	(int cpu, unsigned int *limit);
-
+	unsigned int (*getavg)	(struct cpufreq_policy *policy, unsigned int cpu);
 	int	(*exit)		(struct cpufreq_policy *policy);
 	int	(*suspend)	(struct cpufreq_policy *policy);
 	int	(*resume)	(struct cpufreq_policy *policy);
@@ -258,6 +257,9 @@ int cpufreq_register_driver(struct cpufreq_driver *driver_data);
 int cpufreq_unregister_driver(struct cpufreq_driver *driver_data);
 
 const char *cpufreq_get_current_driver(void);
+
+void cpufreq_notify_utilization(struct cpufreq_policy *policy,
+               unsigned int load);
 
 static inline void cpufreq_verify_within_limits(struct cpufreq_policy *policy,
 		unsigned int min, unsigned int max)
@@ -414,8 +416,16 @@ int cpufreq_driver_target(struct cpufreq_policy *policy,
 int __cpufreq_driver_target(struct cpufreq_policy *policy,
 				   unsigned int target_freq,
 				   unsigned int relation);
+extern int __cpufreq_driver_getavg(struct cpufreq_policy *policy,
+				   unsigned int cpu);
+
 int cpufreq_register_governor(struct cpufreq_governor *governor);
 void cpufreq_unregister_governor(struct cpufreq_governor *governor);
+int lock_policy_rwsem_write(int cpu);
+void unlock_policy_rwsem_write(int cpu);
+enum {
+	BOOT_CPU = 0,
+};
 
 /* CPUFREQ DEFAULT GOVERNOR */
 /*
@@ -493,11 +503,5 @@ static inline int cpufreq_generic_exit(struct cpufreq_policy *policy)
 	cpufreq_frequency_table_put_attr(policy->cpu);
 	return 0;
 }
-
-/*********************************************************************
- *                         CPUFREQ STATS                             *
- *********************************************************************/
-
-void acct_update_power(struct task_struct *p, cputime_t cputime);
 
 #endif /* _LINUX_CPUFREQ_H */
