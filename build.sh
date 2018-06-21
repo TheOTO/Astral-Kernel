@@ -35,6 +35,8 @@ DEFCONFIG="ak_defconfig"
 export LOCALVERSION=~`echo $AK_VER`
 export CROSS_COMPILE=$TOOLCHAIN/aarch64-linux-android-
 export ARCH=arm64
+export USE_CCACHE=1
+export CCACHE_DIR="/home/matt/.ccache"
 export KBUILD_BUILD_USER="TheOTO"
 export KBUILD_BUILD_HOST="XDA-Developers"
 
