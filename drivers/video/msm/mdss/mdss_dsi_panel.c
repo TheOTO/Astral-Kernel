@@ -30,6 +30,7 @@
 #include <misc/app_info.h>
 #include <linux/hw_lcd_common.h>
 #include <hw_lcd_debug.h>
+#include <linux/display_state.h>
 /*delete cpuget() to avoid panic*/
 #ifdef CONFIG_HUAWEI_LCD
 int lcd_debug_mask = LCD_INFO;
@@ -61,6 +62,13 @@ static int LcdPow_DelayTime = false;
 /*open tp gesture can't wake up screen probability*/
 static bool get_tp_reset_status = false;
 DEFINE_LED_TRIGGER(bl_led_trigger);
+
+bool display_on = true;
+
+bool is_display_on()
+{
+	return display_on;
+}
 
 void mdss_dsi_panel_pwm_cfg(struct mdss_dsi_ctrl_pdata *ctrl)
 {
@@ -948,6 +956,7 @@ static int mdss_dsi_post_panel_on(struct mdss_panel_data *pdata)
 		pr_err("%s: Invalid input data\n", __func__);
 		return -EINVAL;
 	}
+		display_on = true;
 
 	ctrl = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
@@ -1001,6 +1010,8 @@ static int mdss_dsi_panel_off(struct mdss_panel_data *pdata)
 
 	if (ctrl->off_cmds.cmd_cnt)
 		mdss_dsi_panel_cmds_send(ctrl, &ctrl->off_cmds);
+
+		display_on = false;
 
 end:
 	pinfo->blank_state = MDSS_PANEL_BLANK_BLANK;
