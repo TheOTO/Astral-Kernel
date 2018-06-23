@@ -24,7 +24,7 @@ OUT_ZIP=$KERNEL_DIR/Releases
 NEW_OUT=$OUT_DIR/tools
 
 # Kernel Version Info
-BASE="-Astral™Kernel"
+BASE="-Astral-Kernel"
 CUR_VER="-6.0"
 AK_VER="$BASE$CUR_VER"
  
