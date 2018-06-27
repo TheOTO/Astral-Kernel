@@ -2266,7 +2266,10 @@ err_remove_fs:
 
 static int soc_to_setpoint(int soc)
 {
-	return DIV_ROUND_CLOSEST(soc * 255, 100);
+	if (soc == 0)
+		return 1;
+	else
+		return DIV_ROUND_CLOSEST(soc * 255, 100);
 }
 
 #define SOC_CNFG	0x450
