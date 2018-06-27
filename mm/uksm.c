@@ -69,7 +69,6 @@
 #include <linux/gcd.h>
 #include <linux/freezer.h>
 #include <linux/sradix-tree.h>
-#include <linux/show_mem_notifier.h>
 
 #include <asm/tlbflush.h>
 #include "internal.h"
@@ -167,7 +166,7 @@ static int is_full_zero(const void *s1, size_t len)
 #else
 static int is_full_zero(const void *s1, size_t len)
 {
-	const unsigned long *src = s1;
+	unsigned long *src = s1;
 	int i;
 
 	len /= sizeof(*src);
@@ -181,10 +180,8 @@ static int is_full_zero(const void *s1, size_t len)
 }
 #endif
 
-#define U64_MAX  ((u64)~0ULL)
 #define UKSM_RUNG_ROUND_FINISHED  (1 << 0)
 #define TIME_RATIO_SCALE	10000
-#define SLEEP_MILLISECS		500
 
 #define SLOT_TREE_NODE_SHIFT	8
 #define SLOT_TREE_NODE_STORE_SIZE	(1UL << SLOT_TREE_NODE_SHIFT)
@@ -730,8 +727,7 @@ static inline struct rmap_item *alloc_rmap_item(void)
 {
 	struct rmap_item *rmap_item;
 
-	rmap_item = kmem_cache_zalloc(rmap_item_cache, GFP_KERNEL |
-						__GFP_NORETRY | __GFP_NOWARN);
+	rmap_item = kmem_cache_zalloc(rmap_item_cache, GFP_KERNEL);
 	if (rmap_item) {
 		/* bug on lowest bit is not clear for flag use */
 		BUG_ON(is_addr(rmap_item));
@@ -881,11 +877,14 @@ static struct page *get_uksm_page(struct stable_node *stable_node,
 {
 	struct page *page;
 	void *expected_mapping;
+	unsigned long kpfn;
 
-	page = pfn_to_page(stable_node->kpfn);
+again:
+	kpfn = stable_node->kpfn;
+	page = pfn_to_page(kpfn);
 	expected_mapping = (void *)stable_node +
 				(PAGE_MAPPING_ANON | PAGE_MAPPING_KSM);
-	rcu_read_lock();
+
 	if (page->mapping != expected_mapping)
 		goto stale;
 	if (!get_page_unless_zero(page))
@@ -894,10 +893,26 @@ static struct page *get_uksm_page(struct stable_node *stable_node,
 		put_page(page);
 		goto stale;
 	}
-	rcu_read_unlock();
+
+	lock_page(page);
+	if (page->mapping != expected_mapping) {
+		unlock_page(page);
+		put_page(page);
+		goto stale;
+	}
+	unlock_page(page);
 	return page;
 stale:
-	rcu_read_unlock();
+	/*
+	 * We come here from above when page->mapping or !PageSwapCache
+	 * suggests that the node is stale; but it might be under migration.
+	 * We need smp_rmb(), matching the smp_wmb() in ksm_migrate_page(),
+	 * before checking whether node->kpfn has been changed.
+	 */
+	smp_rmb();
+	if (stable_node->kpfn != kpfn)
+		goto again;
+
 	remove_node_from_stable_tree(stable_node, unlink_rb, remove_tree_node);
 
 	return NULL;
@@ -982,6 +997,76 @@ static inline bool uksm_test_exit(struct mm_struct *mm)
 	return atomic_read(&mm->mm_users) == 0;
 }
 
+static inline unsigned long vma_pool_size(struct vma_slot *slot)
+{
+	return round_up(sizeof(struct rmap_list_entry) * slot->pages,
+			PAGE_SIZE) >> PAGE_SHIFT;
+}
+
+#define CAN_OVERFLOW_U64(x, delta) (U64_MAX - (x) < (delta))
+
+/* must be done with sem locked */
+static int slot_pool_alloc(struct vma_slot *slot)
+{
+	unsigned long pool_size;
+
+	if (slot->rmap_list_pool)
+		return 0;
+
+	pool_size = vma_pool_size(slot);
+	slot->rmap_list_pool = kzalloc(sizeof(struct page *) *
+				       pool_size, GFP_KERNEL);
+	if (!slot->rmap_list_pool)
+		return -ENOMEM;
+
+	slot->pool_counts = kzalloc(sizeof(unsigned int) * pool_size,
+				    GFP_KERNEL);
+	if (!slot->pool_counts) {
+		kfree(slot->rmap_list_pool);
+		return -ENOMEM;
+	}
+
+	slot->pool_size = pool_size;
+	BUG_ON(CAN_OVERFLOW_U64(uksm_pages_total, slot->pages));
+	slot->flags |= UKSM_SLOT_IN_UKSM;
+	uksm_pages_total += slot->pages;
+
+	return 0;
+}
+
+/*
+ * Called after vma is unlinked from its mm
+ */
+void uksm_remove_vma(struct vm_area_struct *vma)
+{
+	struct vma_slot *slot;
+
+	if (!vma->uksm_vma_slot)
+		return;
+
+	spin_lock(&vma_slot_list_lock);
+	slot = vma->uksm_vma_slot;
+	if (!slot)
+		goto out;
+
+	if (slot_in_uksm(slot)) {
+		/**
+		 * This slot has been added by ksmd, so move to the del list
+		 * waiting ksmd to free it.
+		 */
+		list_add_tail(&slot->slot_list, &vma_slot_del);
+	} else {
+		/**
+		 * It's still on new list. It's ok to free slot directly.
+		 */
+		list_del(&slot->slot_list);
+		free_vma_slot(slot);
+	}
+out:
+	vma->uksm_vma_slot = NULL;
+	spin_unlock(&vma_slot_list_lock);
+}
+
 /**
  * Need to do two things:
  * 1. check if slot was moved to del list
@@ -1026,6 +1111,11 @@ static int try_down_read_slot_mmap_sem(struct vma_slot *slot)
 
 	if (down_read_trylock(sem)) {
 		spin_unlock(&vma_slot_list_lock);
+		if (slot_pool_alloc(slot)) {
+			uksm_remove_vma(vma);
+			up_read(sem);
+			return -ENOENT;
+		}
 		return 0;
 	}
 
@@ -1135,35 +1225,6 @@ void uksm_vma_add_new(struct vm_area_struct *vma)
 	spin_unlock(&vma_slot_list_lock);
 }
 
-/*
- * Called after vma is unlinked from its mm
- */
-void uksm_remove_vma(struct vm_area_struct *vma)
-{
-	struct vma_slot *slot;
-
-	if (!vma->uksm_vma_slot)
-		return;
-
-	slot = vma->uksm_vma_slot;
-	spin_lock(&vma_slot_list_lock);
-	if (slot_in_uksm(slot)) {
-		/**
-		 * This slot has been added by ksmd, so move to the del list
-		 * waiting ksmd to free it.
-		 */
-		list_add_tail(&slot->slot_list, &vma_slot_del);
-	} else {
-		/**
-		 * It's still on new list. It's ok to free slot directly.
-		 */
-		list_del(&slot->slot_list);
-		free_vma_slot(slot);
-	}
-	spin_unlock(&vma_slot_list_lock);
-	vma->uksm_vma_slot = NULL;
-}
-
 /*   32/3 < they < 32/2 */
 #define shiftl	8
 #define shiftr	12
@@ -1251,11 +1312,6 @@ static u32 delta_hash(void *addr, int from, int to, u32 hash)
 
 	return hash;
 }
-
-
-
-
-#define CAN_OVERFLOW_U64(x, delta) (U64_MAX - (x) < (delta))
 
 /**
  *
@@ -1428,7 +1484,7 @@ static int write_protect_page(struct vm_area_struct *vma, struct page *page,
 		 * this assure us that no O_DIRECT can happen after the check
 		 * or in the middle of the check.
 		 */
-		entry = ptep_clear_flush(vma, addr, ptep);
+		entry = ptep_clear_flush_notify(vma, addr, ptep);
 		/*
 		 * Check that no O_DIRECT or similar I/O is in progress on the
 		 * page
@@ -1512,7 +1568,7 @@ static int replace_page(struct vm_area_struct *vma, struct page *page,
 	}
 
 	flush_cache_page(vma, addr, pte_pfn(*ptep));
-	ptep_clear_flush(vma, addr, ptep);
+	ptep_clear_flush_notify(vma, addr, ptep);
 	entry = mk_pte(kpage, vma->vm_page_prot);
 
 	/* special treatment is needed for zero_page */
@@ -1761,7 +1817,7 @@ static int restore_uksm_page_pte(struct vm_area_struct *vma, unsigned long addr,
 	 * pte.
 	 */
 	flush_cache_page(vma, addr, pte_pfn(*ptep));
-	ptep_clear_flush(vma, addr, ptep);
+	ptep_clear_flush_notify(vma, addr, ptep);
 	set_pte_at_notify(mm, addr, ptep, orig_pte);
 
 	pte_unmap_unlock(ptep, ptl);
@@ -2015,7 +2071,7 @@ static int try_merge_rmap_item(struct rmap_item *item,
 	page_add_anon_rmap(tree_page, vma, addr);
 
 	flush_cache_page(vma, addr, pte_pfn(*ptep));
-	ptep_clear_flush(vma, addr, ptep);
+	ptep_clear_flush_notify(vma, addr, ptep);
 	set_pte_at_notify(vma->vm_mm, addr, ptep,
 			  mk_pte(tree_page, vma->vm_page_prot));
 
@@ -2560,7 +2616,7 @@ node_vma_new:
 		hlist_add_head(&new_node_vma->hlist, &stable_node->hlist);
 	} else if (node_vma->key != key) {
 		if (node_vma->key < key)
-			hlist_add_after(&node_vma->hlist, &new_node_vma->hlist);
+			hlist_add_behind(&new_node_vma->hlist, &node_vma->hlist);
 		else {
 			hlist_add_before(&new_node_vma->hlist,
 					 &node_vma->hlist);
@@ -3329,6 +3385,7 @@ out2:
 	put_page(rmap_item->page);
 out1:
 	slot->pages_scanned++;
+	slot->this_sampled++;
 	if (slot->fully_scanned_round != fully_scanned_round)
 		scanned_virtual_pages++;
 
@@ -3551,6 +3608,11 @@ static inline int vma_rung_down(struct vma_slot *slot)
 static unsigned long cal_dedup_ratio(struct vma_slot *slot)
 {
 	unsigned long ret;
+	unsigned long pages;
+
+	pages = slot->this_sampled;
+	if (!pages)
+		return 0;
 
 	BUG_ON(slot->pages_scanned == slot->last_scanned);
 
@@ -3566,7 +3628,7 @@ static unsigned long cal_dedup_ratio(struct vma_slot *slot)
 		}
 	}
 
-	return ret;
+	return ret * 100 / pages;
 }
 
 /**
@@ -3575,17 +3637,13 @@ static unsigned long cal_dedup_ratio(struct vma_slot *slot)
 static unsigned long cal_dedup_ratio_old(struct vma_slot *slot)
 {
 	unsigned long ret;
-	unsigned long pages_scanned;
+	unsigned long pages;
 
-	pages_scanned = slot->pages_scanned;
-	if (!pages_scanned) {
-		if (uksm_thrash_threshold)
-			return 0;
-		else
-			pages_scanned = slot->pages_scanned;
-	}
+	pages = slot->pages;
+	if (!pages)
+		return 0;
 
-	ret = slot->pages_bemerged * 100 / pages_scanned;
+	ret = slot->pages_bemerged;
 
 	/* Thrashing area filtering */
 	if (ret && uksm_thrash_threshold) {
@@ -3597,7 +3655,7 @@ static unsigned long cal_dedup_ratio_old(struct vma_slot *slot)
 		}
 	}
 
-	return ret;
+	return ret * 100 / pages;
 }
 
 /**
@@ -3824,7 +3882,6 @@ static inline unsigned long get_current_neg_ratio(void)
 {
 	if (!rshash_pos || rshash_neg > rshash_pos)
 		return 100;
-
 	return div64_u64(100 * rshash_neg , rshash_pos);
 }
 */
@@ -4124,9 +4181,10 @@ static void uksm_del_vma_slot(struct vma_slot *slot)
 
 out:
 	slot->rung = NULL;
-	BUG_ON(uksm_pages_total < slot->pages);
-	if (slot->flags & UKSM_SLOT_IN_UKSM)
+	if (slot->flags & UKSM_SLOT_IN_UKSM) {
+		BUG_ON(uksm_pages_total < slot->pages);
 		uksm_pages_total -= slot->pages;
+	}
 
 	if (slot->fully_scanned_round == fully_scanned_round)
 		scanned_virtual_pages -= slot->pages;
@@ -4267,48 +4325,12 @@ unsigned int scan_time_to_sleep(unsigned long long scan_time, unsigned long rati
 #define __round_mask(x, y) ((__typeof__(x))((y)-1))
 #define round_up(x, y) ((((x)-1) | __round_mask(x, y))+1)
 
-static inline unsigned long vma_pool_size(struct vma_slot *slot)
-{
-	return round_up(sizeof(struct rmap_list_entry) * slot->pages,
-			PAGE_SIZE) >> PAGE_SHIFT;
-}
-
 static void uksm_vma_enter(struct vma_slot **slots, unsigned long num)
 {
 	struct scan_rung *rung;
-	unsigned long pool_size, i;
-	struct vma_slot *slot;
-	int failed;
 
 	rung = &uksm_scan_ladder[0];
-
-	failed = 0;
-	for (i = 0; i < num; i++) {
-		slot = slots[i];
-
-		pool_size = vma_pool_size(slot);
-		slot->rmap_list_pool = kzalloc(sizeof(struct page *) *
-					       pool_size, GFP_KERNEL);
-		if (!slot->rmap_list_pool)
-			break;
-
-		slot->pool_counts = kzalloc(sizeof(unsigned int) * pool_size,
-					    GFP_KERNEL);
-		if (!slot->pool_counts) {
-			kfree(slot->rmap_list_pool);
-			break;
-		}
-
-		slot->pool_size = pool_size;
-		BUG_ON(CAN_OVERFLOW_U64(uksm_pages_total, slot->pages));
-		slot->flags |= UKSM_SLOT_IN_UKSM;
-		uksm_pages_total += slot->pages;
-	}
-
-	if (i)
-		rung_add_new_slots(rung, slots, i);
-
-	return;
+	rung_add_new_slots(rung, slots, num);
 }
 
 static struct vma_slot *batch_slots[SLOT_TREE_NODE_STORE_SIZE];
@@ -4382,9 +4404,11 @@ static inline void judge_slot(struct vma_slot *slot)
 
 	slot->pages_merged = 0;
 	slot->pages_cowed = 0;
+	slot->this_sampled = 0;
 
-	if (vma_fully_scanned(slot))
+	if (vma_fully_scanned(slot)) {
 		slot->pages_scanned = 0;
+	}
 
 	slot->last_scanned = slot->pages_scanned;
 
@@ -4648,77 +4672,7 @@ static int uksm_scan_thread(void *nothing)
 	return 0;
 }
 
-int page_referenced_ksm(struct page *page, struct mem_cgroup *memcg,
-			unsigned long *vm_flags)
-{
-	struct stable_node *stable_node;
-	struct node_vma *node_vma;
-	struct rmap_item *rmap_item;
-	unsigned int mapcount = page_mapcount(page);
-	int referenced = 0;
-	int search_new_forks = 0;
-	unsigned long address;
-
-	VM_BUG_ON(!PageKsm(page));
-	VM_BUG_ON(!PageLocked(page));
-
-	stable_node = page_stable_node(page);
-	if (!stable_node)
-		return 0;
-
-
-again:
-	hlist_for_each_entry(node_vma, &stable_node->hlist, hlist) {
-		hlist_for_each_entry(rmap_item, &node_vma->rmap_hlist, hlist) {
-			struct anon_vma *anon_vma = rmap_item->anon_vma;
-			struct anon_vma_chain *vmac;
-			struct vm_area_struct *vma;
-
-			anon_vma_lock_read(anon_vma);
-			anon_vma_interval_tree_foreach(vmac, &anon_vma->rb_root,
-						       0, ULONG_MAX) {
-
-				vma = vmac->vma;
-				address = get_rmap_addr(rmap_item);
-
-				if (address < vma->vm_start ||
-				    address >= vma->vm_end)
-					continue;
-				/*
-				 * Initially we examine only the vma which
-				 * covers this rmap_item; but later, if there
-				 * is still work to do, we examine covering
-				 * vmas in other mms: in case they were forked
-				 * from the original since ksmd passed.
-				 */
-				if ((rmap_item->slot->vma == vma) ==
-				    search_new_forks)
-					continue;
-
-				if (memcg &&
-				    !mm_match_cgroup(vma->vm_mm, memcg))
-					continue;
-
-				referenced +=
-					page_referenced_one(page, vma,
-						address, &mapcount, vm_flags);
-				if (!search_new_forks || !mapcount)
-					break;
-			}
-
-			anon_vma_unlock_read(anon_vma);
-			if (!mapcount)
-				goto out;
-		}
-	}
-	if (!search_new_forks++)
-		goto again;
-out:
-	return referenced;
-}
-
-int try_to_unmap_ksm(struct page *page, enum ttu_flags flags,
-			struct vm_area_struct *target_vma)
+int rmap_walk_ksm(struct page *page, struct rmap_walk_control *rwc)
 {
 	struct stable_node *stable_node;
 	struct node_vma *node_vma;
@@ -4727,18 +4681,12 @@ int try_to_unmap_ksm(struct page *page, enum ttu_flags flags,
 	int search_new_forks = 0;
 	unsigned long address;
 
-	VM_BUG_ON(!PageKsm(page));
-	VM_BUG_ON(!PageLocked(page));
+	VM_BUG_ON_PAGE(!PageKsm(page), page);
+	VM_BUG_ON_PAGE(!PageLocked(page), page);
 
 	stable_node = page_stable_node(page);
 	if (!stable_node)
-		return SWAP_FAIL;
-
-	if (target_vma) {
-		unsigned long address = vma_address(page, target_vma);
-		ret = try_to_unmap_one(page, target_vma, address, flags);
-		goto out;
-	}
+		return ret;
 again:
 	hlist_for_each_entry(node_vma, &stable_node->hlist, hlist) {
 		hlist_for_each_entry(rmap_item, &node_vma->rmap_hlist, hlist) {
@@ -4746,29 +4694,32 @@ again:
 			struct anon_vma_chain *vmac;
 			struct vm_area_struct *vma;
 
+			cond_resched();
 			anon_vma_lock_read(anon_vma);
 			anon_vma_interval_tree_foreach(vmac, &anon_vma->rb_root,
 						       0, ULONG_MAX) {
+				cond_resched();
 				vma = vmac->vma;
 				address = get_rmap_addr(rmap_item);
 
 				if (address < vma->vm_start ||
 				    address >= vma->vm_end)
 					continue;
-				/*
-				 * Initially we examine only the vma which
-				 * covers this rmap_item; but later, if there
-				 * is still work to do, we examine covering
-				 * vmas in other mms: in case they were forked
-				 * from the original since ksmd passed.
-				 */
+
 				if ((rmap_item->slot->vma == vma) ==
 				    search_new_forks)
 					continue;
 
-				ret = try_to_unmap_one(page, vma,
-						       address, flags);
-				if (ret != SWAP_AGAIN || !page_mapped(page)) {
+				if (rwc->invalid_vma && rwc->invalid_vma(vma, rwc->arg))
+					continue;
+
+				ret = rwc->rmap_one(page, vma, address, rwc->arg);
+				if (ret != SWAP_AGAIN) {
+					anon_vma_unlock_read(anon_vma);
+					goto out;
+				}
+
+				if (rwc->done && rwc->done(page)) {
 					anon_vma_unlock_read(anon_vma);
 					goto out;
 				}
@@ -4783,71 +4734,27 @@ out:
 }
 
 #ifdef CONFIG_MIGRATION
-int rmap_walk_ksm(struct page *page, int (*rmap_one)(struct page *,
-		  struct vm_area_struct *, unsigned long, void *), void *arg)
-{
-	struct stable_node *stable_node;
-	struct node_vma *node_vma;
-	struct rmap_item *rmap_item;
-	int ret = SWAP_AGAIN;
-	int search_new_forks = 0;
-	unsigned long address;
-
-	VM_BUG_ON(!PageKsm(page));
-	VM_BUG_ON(!PageLocked(page));
-
-	stable_node = page_stable_node(page);
-	if (!stable_node)
-		return ret;
-again:
-	hlist_for_each_entry(node_vma, &stable_node->hlist, hlist) {
-		hlist_for_each_entry(rmap_item, &node_vma->rmap_hlist, hlist) {
-			struct anon_vma *anon_vma = rmap_item->anon_vma;
-			struct anon_vma_chain *vmac;
-			struct vm_area_struct *vma;
-
-			anon_vma_lock_read(anon_vma);
-			anon_vma_interval_tree_foreach(vmac, &anon_vma->rb_root,
-						       0, ULONG_MAX) {
-				vma = vmac->vma;
-				address = get_rmap_addr(rmap_item);
-
-				if (address < vma->vm_start ||
-				    address >= vma->vm_end)
-					continue;
-
-				if ((rmap_item->slot->vma == vma) ==
-				    search_new_forks)
-					continue;
-
-				ret = rmap_one(page, vma, address, arg);
-				if (ret != SWAP_AGAIN) {
-					anon_vma_unlock_read(anon_vma);
-					goto out;
-				}
-			}
-			anon_vma_unlock_read(anon_vma);
-		}
-	}
-	if (!search_new_forks++)
-		goto again;
-out:
-	return ret;
-}
-
 /* Common ksm interface but may be specific to uksm */
 void ksm_migrate_page(struct page *newpage, struct page *oldpage)
 {
 	struct stable_node *stable_node;
 
-	VM_BUG_ON(!PageLocked(oldpage));
-	VM_BUG_ON(!PageLocked(newpage));
+	VM_BUG_ON_PAGE(!PageLocked(oldpage), oldpage);
+	VM_BUG_ON_PAGE(!PageLocked(newpage), newpage);
 	VM_BUG_ON(newpage->mapping != oldpage->mapping);
 
 	stable_node = page_stable_node(newpage);
 	if (stable_node) {
 		VM_BUG_ON(stable_node->kpfn != page_to_pfn(oldpage));
 		stable_node->kpfn = page_to_pfn(newpage);
+		/*
+		 * newpage->mapping was set in advance; now we need smp_wmb()
+		 * to make sure that the new stable_node->kpfn is visible
+		 * to get_ksm_page() before it can see that oldpage->mapping
+		 * has gone stale (or that PageSwapCache has been cleared).
+		 */
+		smp_wmb();
+		set_page_stable_node(oldpage, NULL);
 	}
 }
 #endif /* CONFIG_MIGRATION */
@@ -4932,7 +4839,7 @@ static ssize_t max_cpu_percentage_store(struct kobject *kobj,
 	unsigned long max_cpu_percentage;
 	int err;
 
-	err = strict_strtoul(buf, 10, &max_cpu_percentage);
+	err = kstrtoul(buf, 10, &max_cpu_percentage);
 	if (err || max_cpu_percentage > 100)
 		return -EINVAL;
 
@@ -4960,7 +4867,7 @@ static ssize_t sleep_millisecs_store(struct kobject *kobj,
 	unsigned long msecs;
 	int err;
 
-	err = strict_strtoul(buf, 10, &msecs);
+	err = kstrtoul(buf, 10, &msecs);
 	if (err || msecs > MSEC_PER_SEC)
 		return -EINVAL;
 
@@ -5046,7 +4953,7 @@ static ssize_t run_store(struct kobject *kobj, struct kobj_attribute *attr,
 	int err;
 	unsigned long flags;
 
-	err = strict_strtoul(buf, 10, &flags);
+	err = kstrtoul(buf, 10, &flags);
 	if (err || flags > UINT_MAX)
 		return -EINVAL;
 	if (flags > UKSM_RUN_MERGE)
@@ -5078,7 +4985,7 @@ static ssize_t abundant_threshold_store(struct kobject *kobj,
 	int err;
 	unsigned long flags;
 
-	err = strict_strtoul(buf, 10, &flags);
+	err = kstrtoul(buf, 10, &flags);
 	if (err || flags > 99)
 		return -EINVAL;
 
@@ -5101,7 +5008,7 @@ static ssize_t thrash_threshold_store(struct kobject *kobj,
 	int err;
 	unsigned long flags;
 
-	err = strict_strtoul(buf, 10, &flags);
+	err = kstrtoul(buf, 10, &flags);
 	if (err || flags > 99)
 		return -EINVAL;
 
@@ -5162,13 +5069,13 @@ static ssize_t cpu_ratios_store(struct kobject *kobj,
 
 		if (strstr(p, "MAX/")) {
 			p = strchr(p, '/') + 1;
-			err = strict_strtoul(p, 10, &value);
+			err = kstrtoul(p, 10, &value);
 			if (err || value > TIME_RATIO_SCALE || !value)
 				return -EINVAL;
 
 			cpuratios[i] = - (int) (TIME_RATIO_SCALE / value);
 		} else {
-			err = strict_strtoul(p, 10, &value);
+			err = kstrtoul(p, 10, &value);
 			if (err || value > TIME_RATIO_SCALE || !value)
 				return -EINVAL;
 
@@ -5215,8 +5122,9 @@ static ssize_t eval_intervals_store(struct kobject *kobj,
 	unsigned long values[SCAN_LADDER_SIZE];
 	struct scan_rung *rung;
 	char *p, *end = NULL;
+	ssize_t ret = count;
 
-	p = kzalloc(count, GFP_KERNEL);
+	p = kzalloc(count + 2, GFP_KERNEL);
 	if (!p)
 		return -ENOMEM;
 
@@ -5225,15 +5133,19 @@ static ssize_t eval_intervals_store(struct kobject *kobj,
 	for (i = 0; i < SCAN_LADDER_SIZE; i++) {
 		if (i != SCAN_LADDER_SIZE -1) {
 			end = strchr(p, ' ');
-			if (!end)
-				return -EINVAL;
+			if (!end) {
+				ret = -EINVAL;
+				goto out;
+			}
 
 			*end = '\0';
 		}
 
-		err = strict_strtoul(p, 10, &values[i]);
-		if (err)
-			return -EINVAL;
+		err = kstrtoul(p, 10, &values[i]);
+		if (err) {
+			ret = -EINVAL;
+			goto out;
+		}
 
 		p = end + 1;
 	}
@@ -5244,7 +5156,9 @@ static ssize_t eval_intervals_store(struct kobject *kobj,
 		rung->cover_msecs = values[i];
 	}
 
-	return count;
+out:
+	kfree(p);
+	return ret;
 }
 UKSM_ATTR(eval_intervals);
 
@@ -5475,20 +5389,6 @@ static inline int init_random_sampling(void)
 	return cal_positive_negative_costs();
 }
 
-static int uksm_show_mem_notifier(struct notifier_block *nb,
-				unsigned long action,
-				void *data)
-{
-	pr_info("uksm_pages_sharing: %lu\n", uksm_pages_sharing);
-	pr_info("uksm_pages_shared: %lu\n", uksm_pages_shared);
-
-	return 0;
-}
-
-static struct notifier_block uksm_show_mem_notifier_block = {
-	.notifier_call = uksm_show_mem_notifier,
-};
-
 static int __init uksm_slab_init(void)
 {
 	rmap_item_cache = UKSM_KMEM_CACHE(rmap_item, 0);
@@ -5598,7 +5498,7 @@ static int __init uksm_init(void)
 	struct task_struct *uksm_thread;
 	int err;
 
-	uksm_sleep_jiffies = msecs_to_jiffies(SLEEP_MILLISECS);
+	uksm_sleep_jiffies = msecs_to_jiffies(100);
 	uksm_sleep_saved = uksm_sleep_jiffies;
 
 	slot_tree_init();
@@ -5645,9 +5545,6 @@ static int __init uksm_init(void)
 #endif
 	return 0;
 
-	show_mem_notifier_register(&uksm_show_mem_notifier_block);
-	return 0;
-
 out_free:
 	kfree(zero_hash_table);
 out_free0:
@@ -5660,8 +5557,7 @@ out_free2:
 }
 
 #ifdef MODULE
-module_init(uksm_init)
+subsys_initcall(ksm_init);
 #else
 late_initcall(uksm_init);
 #endif
-

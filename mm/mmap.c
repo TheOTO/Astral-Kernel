@@ -636,6 +636,7 @@ static void __vma_link_file(struct vm_area_struct *vma)
 	struct file *file;
 
 	file = vma->vm_file;
+	uksm_vma_add_new(vma);
 	if (file) {
 		struct address_space *mapping = file->f_mapping;
 
@@ -743,7 +744,6 @@ int vma_adjust(struct vm_area_struct *vma, unsigned long start,
 
 	if (next && !insert) {
 		struct vm_area_struct *exporter = NULL;
-
 		uksm_remove_vma(next);
 		if (end >= next->vm_end) {
 			/*
@@ -915,7 +915,7 @@ again:			remove_next = 1 + (end > next->vm_end);
 		} else if (next) {
 			vma_gap_update(next);
 		} else {
-			mm->highest_vm_end = end;
+			WARN_ON(mm->highest_vm_end != vm_end_gap(vma));
 		}
 	} else {
 		if (next && !insert)
@@ -2660,7 +2660,6 @@ static unsigned long do_brk(unsigned long addr, unsigned long len)
 
 	flags = VM_DATA_DEFAULT_FLAGS | VM_ACCOUNT | mm->def_flags;
 	uksm_vm_flags_mod(&flags);
-
 	error = get_unmapped_area(NULL, addr, len, 0, MAP_FIXED);
 	if (error & ~PAGE_MASK)
 		return error;
@@ -2806,7 +2805,7 @@ void exit_mmap(struct mm_struct *mm)
 
 	mm->mmap = NULL;
 	mm->mm_rb = RB_ROOT;
-	mm->mmap_cache = NULL;
+//	vmacache_invalidate(mm);
 	up_write(&mm->mmap_sem);
 
 	WARN_ON(mm->nr_ptes > (FIRST_USER_ADDRESS+PMD_SIZE-1)>>PMD_SHIFT);
