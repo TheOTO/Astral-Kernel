@@ -35,7 +35,7 @@ delete("/tmp/unpackbootimg");
 delete("/tmp/flash_kernel.sh");
 ui_print(" ");
 ui_print(" ");
-ui_print("Done!");
+ui_print("All done!");
 unmount("/system");
 ui_print(" ");
 ui_print(" ");

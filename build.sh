@@ -92,8 +92,8 @@ function make_zip {
 		echo -e "*****************************************************"
 		cd $OUT_DIR
 		rm -f '*.zip'
-		zip -yr AstralKernel`echo $CUR_VER`.zip *
-		mv AstralKernel`echo $CUR_VER`.zip $OUT_ZIP
+		zip -yr Astral-Kernel`echo $CUR_VER`.zip *
+		mv Astral-Kernel`echo $CUR_VER`.zip $OUT_ZIP
 		echo "       Find your zip in Releases directory"
 		echo -e "$default"
 		cd $KERNEL_DIR 
