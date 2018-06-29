@@ -571,6 +571,13 @@ config MSM_PERFORMANCE_HOTPLUG_ON
           compile out the nodes needed for core-control functionality through
           msm_performance.
 
+config MSM_LIMITER
+	bool "MSM Frequency Limiter Driver"
+	default y
+	help
+	  The MSM Frequency Limiter Driver controls max frequency limit for each CPU
+	  to desired value on suspend/resume
+
 config STATE_NOTIFIER
 		bool "State Notifier"
 
