@@ -24,7 +24,7 @@
 // Define max possible value for input boost duration.
 #define MAX_INPUT_BOOST_DURATION_MS 10000
 
-#define DEFAULT_INPUT_BOOST_FREQ 1497600	// Frequency to boost to on touch
+#define DEFAULT_INPUT_BOOST_FREQ 800000	// Frequency to boost to on touch
 #define DEFAULT_INPUT_BOOST_DURATION_MS 1500	// How long to boost (ms)
 
 unsigned int input_boost_freq = DEFAULT_INPUT_BOOST_FREQ;
