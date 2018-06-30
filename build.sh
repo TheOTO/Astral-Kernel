@@ -25,7 +25,7 @@ NEW_OUT=$OUT_DIR/tools
 
 # Kernel Version Info
 BASE="-Astral-Kernel"
-CUR_VER="-6.0"
+CUR_VER="-6.0.1"
 AK_VER="$BASE$CUR_VER"
  
 
