@@ -25,9 +25,9 @@ NEW_OUT=$OUT_DIR/tools
 
 # Kernel Version Info
 BASE="-Astral-Kernel"
-CUR_VER="-6.0.1"
+CUR_VER="-6.0.2"
 AK_VER="$BASE$CUR_VER"
- 
+
 
 # Variables
 
@@ -57,7 +57,7 @@ function make_ak {
 		echo "              Compilation Completed!!              "
 		echo -e "*****************************************************$default"
 		}
-		
+
 function make_clean {
 		echo -e "$green***********************************************"
 		echo "          Cleaning up object files and other stuff	              "
@@ -65,7 +65,7 @@ function make_clean {
 		make mrproper
 		make_ak
 	}
-		
+
 function make_recompile {
 			echo -e "$cyan*******************************************************"
 			echo "             Recompiling $AK_VER	              "
@@ -77,7 +77,7 @@ function make_recompile {
 			make_zip
 			housekeeping
 		}
-		
+
 function make_dtb {
 			echo -e "$blue*******************************************************"
 			echo "             		Creating dt.img....	              "
@@ -96,7 +96,7 @@ function make_zip {
 		mv Astral-Kernel`echo $CUR_VER`.zip $OUT_ZIP
 		echo "       Find your zip in Releases directory"
 		echo -e "$default"
-		cd $KERNEL_DIR 
+		cd $KERNEL_DIR
 		}
 
 function housekeeping {
@@ -106,7 +106,7 @@ function housekeeping {
 		rm -rf $NEW_OUT/Image
 		rm -rf $NEW_OUT/dt.img
 	}
-		
+
 
 BUILD_START=$(date +"%s")
 while read -p " 'Y' to Compile all , 'R' to clean and recompile , 'C' to to do a clean compilation 'N' to exit " choice
