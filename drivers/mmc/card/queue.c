@@ -22,8 +22,6 @@
 #include <linux/sched/rt.h>
 #include "queue.h"
 
-#include <linux/iosched_switcher.h>
-
 #define MMC_QUEUE_BOUNCESZ	65536
 
 /*
@@ -423,8 +421,6 @@ success:
 		ret = PTR_ERR(mq->thread);
 		goto free_bounce_sg;
 	}
-
-	init_iosched_switcher(mq->queue);
 
 	return 0;
  free_bounce_sg:
