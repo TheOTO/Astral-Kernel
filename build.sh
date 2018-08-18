@@ -16,10 +16,12 @@ KERNEL_DIR=$PWD
 IMAGE=$KERNEL_DIR/arch/arm64/boot/Image
 DTBTOOL=$KERNEL_DIR/scripts/dtbTool
 TOOLCHAIN=$ANDROID_DIR/ubertc/bin
+STRIP=$TOOLCHAIN/aarch64-linux-android-strip
 
 #Paths
 OUT_DIR=$KERNEL_DIR/AnyKernel2
 OUT_ZIP=$KERNEL_DIR/Releases
+MODULES_DIR=$OUT_DIR/modules/system/lib/modules
 
 # Kernel Version Info
 BASE="Astral-Kernel"
@@ -47,6 +49,7 @@ function make_ak {
 		make -j2
 		rm -rf $OUT_DIR/Image
 		cp -vr $IMAGE $OUT_DIR
+		make_modules
 		make_dtb
 		make_zip
 		housekeeping
@@ -62,6 +65,19 @@ function make_clean {
 		echo
 		make clean && make mrproper
 		git clean -f -d > /dev/null 2>&1
+}
+
+function make_modules {
+		echo -e "${cyan}"
+		echo "**********    Building modules...    **********"
+		if [ -f "$MODULES_DIR/*.ko" ]; then
+			rm `echo $MODULES_DIR"/*.ko"`
+		fi
+		cd $KERNEL_DIR
+		find -name '*.ko' -exec cp -v {} $MODULES_DIR \;
+		cd $MODULES_DIR
+		$STRIP --strip-unneeded *.ko
+		cd $KERNEL_DIR
 }
 
 function make_dtb {
@@ -91,7 +107,7 @@ function housekeeping {
 		echo -e "${default}"
 		rm -rf $OUT_DIR/Image
 		rm -rf $OUT_DIR/dt.img
-	}
+}
 
 
 BUILD_START=$(date +"%s")
