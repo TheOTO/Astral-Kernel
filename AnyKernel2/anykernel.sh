@@ -38,6 +38,8 @@ dump_boot;
 # init.rc
 
 # init.qcom.rc
+backup_file init.qcom.rc;
+insert_line init.qcom.rc "init.ak.rc" after "import init.target.rc" "import init.ak.rc";
 
 # fstab.qcom
 
