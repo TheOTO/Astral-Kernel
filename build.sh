@@ -49,13 +49,12 @@ function make_ak {
 		make -j2
 		rm -rf $OUT_DIR/Image
 		cp -vr $IMAGE $OUT_DIR
-		make_modules
-		make_dtb
-		make_zip
-		housekeeping
-		echo -e "${green}"
-		echo "**********    Build complete!    **********"
-		echo -e "${default}"
+		if ! [ -a $IMAGE ]; then
+			echo -e "${red}"
+			echo "**********    Kernel compilation failed!    **********"
+			echo -e "${default}"
+			exit 1
+		fi
 }
 
 function make_clean {
@@ -73,11 +72,11 @@ function make_modules {
 		if [ -f "$MODULES_DIR/*.ko" ]; then
 			rm `echo $MODULES_DIR"/*.ko"`
 		fi
-		cd $KERNEL_DIR
+		cd $KERNEL_DIR || return
 		find -name '*.ko' -exec cp -v {} $MODULES_DIR \;
-		cd $MODULES_DIR
+		cd $MODULES_DIR || return
 		$STRIP --strip-unneeded *.ko
-		cd $KERNEL_DIR
+		cd $KERNEL_DIR || return
 }
 
 function make_dtb {
@@ -90,7 +89,7 @@ function make_dtb {
 function make_zip {
 		echo -e "${yellow}"
 		echo "**********    Zipping up...    **********"
-		cd $OUT_DIR
+		cd $OUT_DIR || return
 		rm -f '*.zip'
 		zip -yr Astral-Kernel`echo $CUR_VER`.zip *
 		mv Astral-Kernel`echo $CUR_VER`.zip $OUT_ZIP
@@ -98,7 +97,7 @@ function make_zip {
 		echo -e "${red}"
 		echo "+++   Find your zip in Releases directory   +++"
 		echo -e "${default}"
-		cd $KERNEL_DIR
+		cd $KERNEL_DIR || return
 }
 
 function housekeeping {
@@ -109,13 +108,23 @@ function housekeeping {
 		rm -rf $OUT_DIR/dt.img
 }
 
+function build_complete {
+		echo -e "${green}"
+		echo "**********    Kernel compilation complete!    **********"
+		echo -e "${default}"
+}
 
 BUILD_START=$(date +"%s")
-while read -p " Choose 'Y' to compile all , 'C' to clean all , or 'N' to exit = " choice
+while read -r -p " Choose 'Y' to compile all , 'C' to clean all , or 'N' to exit = " choice
 do
 case "$choice" in
 	y|Y)
 		make_ak
+		build_complete
+		make_modules
+		make_dtb
+		make_zip
+		housekeeping
 		break
 		;;
 	c|C )
