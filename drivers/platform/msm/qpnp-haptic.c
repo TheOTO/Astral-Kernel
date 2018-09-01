@@ -206,6 +206,7 @@ struct qpnp_hap {
 	struct qpnp_pwm_info pwm_info;
 	struct mutex lock;
 	struct mutex wf_lock;
+	struct workqueue_struct *wq;
 	enum qpnp_hap_mode play_mode;
 	enum qpnp_hap_auto_res_mode auto_res_mode;
 	enum qpnp_hap_high_z lra_high_z;
@@ -1098,7 +1099,7 @@ static void qpnp_hap_td_enable(struct timed_output_dev *dev, int value)
 			      HRTIMER_MODE_REL);
 	}
 	mutex_unlock(&hap->lock);
-	schedule_work(&hap->work);
+	queue_work(hap->wq, &hap->work);
 }
 
 /* worker to opeate haptics */
@@ -1585,6 +1586,12 @@ static int qpnp_haptic_probe(struct spmi_device *spmi)
 	rc = qpnp_hap_config(hap);
 	if (rc) {
 		dev_err(&spmi->dev, "hap config failed\n");
+		return rc;
+	}
+
+	hap->wq = alloc_workqueue("qpnp_haptics", WQ_HIGHPRI, 0);
+	if (!hap->wq) {
+		dev_err(&spmi->dev, "Failed to allocate workqueue\n");
 		return rc;
 	}
 
