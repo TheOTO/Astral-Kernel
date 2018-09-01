@@ -14,6 +14,8 @@ DTB_LIST := $(dtb-y)
 endif
 targets += $(DTB_LIST)
 
+.PHONY: dtbs
 dtbs: $(addprefix $(obj)/, $(DTB_LIST))
+	@true
 
 clean-files := dts/*.dtb *.dtb
