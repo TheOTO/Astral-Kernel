@@ -25,7 +25,7 @@ MODULES_DIR=$OUT_DIR/modules/system/lib/modules
 
 # Kernel Version Info
 BASE="Astral-Kernel"
-CUR_VER="-6.0.3"
+CUR_VER="-6.1"
 AK_VER="$BASE$CUR_VER"
 
 
