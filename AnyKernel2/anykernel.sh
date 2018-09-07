@@ -42,6 +42,8 @@ backup_file init.qcom.rc;
 insert_line init.qcom.rc "init.ak.rc" after "import init.target.rc" "import init.ak.rc";
 
 # fstab.qcom
+backup_file fstab.qcom;
+replace_line fstab.qcom "#/dev/block/zram0                        none               swap     defaults                                                     zramsize=536870912,zramstreams=3" "/dev/block/zram0                        none               swap     defaults                                                     zramsize=536870912,zramstreams=3"
 
 # end ramdisk changes
 
