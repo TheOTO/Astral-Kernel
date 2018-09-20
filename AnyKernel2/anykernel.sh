@@ -25,8 +25,8 @@ ramdisk_compression=auto;
 
 ## AnyKernel file attributes
 # set permissions/ownership for included ramdisk files
-chmod -R 750 $ramdisk/*;
-chmod -R 755 $ramdisk/sbin;
+chmod 750 $ramdisk/init.ak.rc;
+chmod 755 $ramdisk/init.astral.sh
 chown -R root:root $ramdisk/*;
 
 
@@ -35,15 +35,46 @@ dump_boot;
 
 # begin ramdisk changes
 
-# init.rc
+# backup all original files before applying changes
+backup_file init.rc
+backup_file init.qcom.rc
+backup_file init.qcom.power.rc
+backup_file fstab.qcom
 
 # init.qcom.rc
-backup_file init.qcom.rc;
 insert_line init.qcom.rc "init.ak.rc" after "import init.target.rc" "import init.ak.rc";
 
+# init.rc
+replace_line init.rc "    mount cgroup none /dev/cpuctl cpu" "    mount cgroup none /dev/cpuctl cpu,timer_slack";
+replace_line init.rc "    write /proc/sys/kernel/sched_rt_runtime_us 950000" "    write /proc/sys/kernel/sched_rt_runtime_us 800000";
+replace_line init.rc "    write /dev/cpuctl/cpu.rt_runtime_us 950000" "    write /dev/cpuctl/cpu.rt_runtime_us 800000";
+replace_line init.rc "    write /proc/sys/vm/dirty_expire_centisecs 200" "    write /proc/sys/vm/dirty_expire_centisecs 300";
+replace_line init.rc "    write /proc/sys/vm/dirty_background_ratio  5" "    write /proc/sys/vm/dirty_background_ratio  20";
+insert_line init.rc "    chown system system /sys/devices/system/cpu/cpu4/cpufreq/scaling_max_freq" after "    chown system system /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq" "    chown system system /sys/devices/system/cpu/cpu4/cpufreq/scaling_max_freq";
+insert_line init.rc "    chmod 0660 /sys/devices/system/cpu/cpu4/cpufreq/scaling_max_freq" after "    chmod 0660 /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq" "    chmod 0660 /sys/devices/system/cpu/cpu4/cpufreq/scaling_max_freq";
+
+# init.qcom.power.rc
+replace_line init.qcom.power.rc "    setprop sys.io.scheduler cfq" "    setprop sys.io.scheduler zen";
+insert_line init.qcom.power.rc "    write /sys/module/lowmemorykiller/parameters/lmk_fast_run 1" after "    write /sys/module/lowmemorykiller/parameters/enable_adaptive_lmk 0" "    write /sys/module/lowmemorykiller/parameters/lmk_fast_run 1";
+insert_line init.qcom.power.rc "    write /sys/module/lowmemorykiller/parameters/cost 32" after "    write /sys/module/lowmemorykiller/parameters/enable_adaptive_lmk 0" "    write /sys/module/lowmemorykiller/parameters/cost 32";
+insert_line init.qcom.power.rc "    write /proc/sys/kernel/sched_wake_to_idle 0" after "    write /proc/sys/kernel/sched_mostly_idle_nr_run 3" "    write /proc/sys/kernel/sched_wake_to_idle 0";
+replace_line init.qcom.power.rc "    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/go_hispeed_load 99" "    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/go_hispeed_load 95";
+replace_line init.qcom.power.rc "    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/timer_rate 20000" "    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/timer_rate 10000";
+replace_line init.qcom.power.rc "    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/hispeed_freq 800000" "    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/hispeed_freq 400000";
+replace_line init.qcom.power.rc "    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/min_sample_time 50000" "    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/min_sample_time 60000";
+insert_line init.qcom.power.rc "    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/timer_slack -1" after "    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/io_is_busy 0" "    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/timer_slack -1";
+insert_line init.qcom.power.rc "    write /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq 960000" before "    write /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq 200000" "    write /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq 960000";
+replace_line init.qcom.power.rc "    write /sys/devices/system/cpu/cpu4/cpufreq/interactive/hispeed_freq 998400" "    write /sys/devices/system/cpu/cpu4/cpufreq/interactive/hispeed_freq 800000";
+insert_line init.qcom.power.rc "    write /sys/devices/system/cpu/cpu4/cpufreq/interactive/timer_slack -1" after "    write /sys/devices/system/cpu/cpu4/cpufreq/interactive/io_is_busy 0" "    write /sys/devices/system/cpu/cpu4/cpufreq/interactive/timer_slack -1";
+insert_line init.qcom.power.rc "    write /sys/devices/system/cpu/cpu4/cpufreq/scaling_max_freq 800000" after "    write /sys/devices/system/cpu/cpu4/cpufreq/interactive/min_sample_time 40000" "    write /sys/devices/system/cpu/cpu4/cpufreq/scaling_max_freq 800000";
+replace_line init.qcom.power.rc "    write /sys/devices/system/cpu/cpu4/cpufreq/scaling_min_freq 800000" "    write /sys/devices/system/cpu/cpu4/cpufreq/scaling_min_freq 200000";
+remove_line init.qcom.power.rc "    # Enable cluster plug now and allow the powerhal to control it";
+remove_line init.qcom.power.rc "    chown system system /sys/module/cluster_plug/parameters/low_power_mode";
+remove_line init.qcom.power.rc "    write /sys/module/cluster_plug/parameters/active 1";
+replace_line init.qcom.power.rc '    write /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor "powersave"' '    write /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor "ondemand"';
+
 # fstab.qcom
-backup_file fstab.qcom;
-replace_line fstab.qcom "#/dev/block/zram0                        none               swap     defaults                                                     zramsize=536870912,zramstreams=3" "/dev/block/zram0                        none               swap     defaults                                                     zramsize=536870912,zramstreams=3"
+replace_line fstab.qcom "#/dev/block/zram0                        none               swap     defaults                                                     zramsize=536870912,zramstreams=3" "/dev/block/zram0                        none               swap     defaults                                                     zramsize=335544320,zramstreams=3";
 
 # end ramdisk changes
 
