@@ -49,7 +49,7 @@ backup_file fstab.qcom
 insert_line init.qcom.rc "init.ak.rc" after "import init.target.rc" "import init.ak.rc";
 
 # init.rc
-insert_line init.rc "import /init.spectrum.rc" after "import /init.cm.rc";
+insert_line init.rc "import /init.spectrum.rc" after "import /init.cm.rc" "import /init.spectrum.rc";
 replace_line init.rc "    mount cgroup none /dev/cpuctl cpu" "    mount cgroup none /dev/cpuctl cpu,timer_slack";
 replace_line init.rc "    write /proc/sys/kernel/sched_rt_runtime_us 950000" "    write /proc/sys/kernel/sched_rt_runtime_us 800000";
 replace_line init.rc "    write /dev/cpuctl/cpu.rt_runtime_us 950000" "    write /dev/cpuctl/cpu.rt_runtime_us 800000";
