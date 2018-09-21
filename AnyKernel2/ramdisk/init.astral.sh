@@ -3,18 +3,18 @@
 ################################################################################
 # helper functions to allow Android init like script
 
-function write() {
-    echo -n $2 > $1
+write() {
+    echo "$2" > "$1"
 }
 
-function copy() {
-    cat $1 > $2
+copy() {
+    cat "$1" > "$2"
 }
 
-function get-set-forall() {
+setforall() {
     for f in $1 ; do
-        cat $f
-        write $f $2
+        cat "$f"
+        write "$f" "$2"
     done
 }
 
@@ -24,18 +24,18 @@ function get-set-forall() {
 
 sleep 20
 
-get-set-forall /sys/block/mmcblk*/queue/iosched/async_expire 2500
-get-set-forall /sys/block/mmcblk*/queue/iosched/fifo_batch 8
-get-set-forall /sys/block/mmcblk*/queue/iosched/sync_expire 300
-get-set-forall /sys/block/loop*/queue/add_random 0
-get-set-forall /sys/block/loop*/queue/rq_affinity 2
-get-set-forall /sys/block/loop*/queue/nomerges 1
-get-set-forall /sys/block/mmcblk*/queue/add_random 0
-get-set-forall /sys/block/mmcblk*/queue/rq_affinity 2
-get-set-forall /sys/block/mmcblk*/queue/nomerges 1
-get-set-forall /sys/block/ram*/queue/add_random 0
-get-set-forall /sys/block/ram*/queue/rq_affinity 2
-get-set-forall /sys/block/ram*/queue/nomerges 1
+setforall /sys/block/mmcblk*/queue/iosched/async_expire 2500
+setforall /sys/block/mmcblk*/queue/iosched/fifo_batch 8
+setforall /sys/block/mmcblk*/queue/iosched/sync_expire 300
+setforall /sys/block/loop*/queue/add_random 0
+setforall /sys/block/loop*/queue/rq_affinity 2
+setforall /sys/block/loop*/queue/nomerges 1
+setforall /sys/block/mmcblk*/queue/add_random 0
+setforall /sys/block/mmcblk*/queue/rq_affinity 2
+setforall /sys/block/mmcblk*/queue/nomerges 1
+setforall /sys/block/ram*/queue/add_random 0
+setforall /sys/block/ram*/queue/rq_affinity 2
+setforall /sys/block/ram*/queue/nomerges 1
 
 chmod 0664 /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq
 chmod 0664 /sys/devices/system/cpu/cpu4/cpufreq/scaling_max_freq
@@ -82,7 +82,7 @@ write /sys/module/cpu_boost/parameters/wakeup_boost Y
 write /sys/module/cpu_boost/parameters/hotplug_boost Y
 
 for i in /sys/class/net/*; do
-    echo 100 > $i/tx_queue_len;
+    echo 100 > "$i/tx_queue_len";
 done;
 
 }&

@@ -123,6 +123,8 @@ unset LD_LIBRARY_PATH;
 unset LD_PRELOAD;
 
 ui_print "Installing kernel...";
+ui_print "and";
+ui_print "Injecting configurable Spectrum support...";
 for i in $($bb --list); do
   $bb ln -s $bb /tmp/anykernel/bin/$i;
 done;

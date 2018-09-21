@@ -27,7 +27,11 @@ ramdisk_compression=auto;
 # set permissions/ownership for included ramdisk files
 chmod 750 $ramdisk/init.ak.rc;
 chmod 755 $ramdisk/init.astral.sh
+chmod +x $ramdisk/init.astral.sh
+chmod 755 $ramdisk/init.supolicy.sh
+chmod +x $ramdisk/init.supolicy.sh
 chown -R root:root $ramdisk/*;
+chmod +x $ramdisk/sbin/spa
 
 
 ## AnyKernel install
@@ -45,6 +49,7 @@ backup_file fstab.qcom
 insert_line init.qcom.rc "init.ak.rc" after "import init.target.rc" "import init.ak.rc";
 
 # init.rc
+insert_line init.rc "import /init.spectrum.rc" after "import /init.cm.rc";
 replace_line init.rc "    mount cgroup none /dev/cpuctl cpu" "    mount cgroup none /dev/cpuctl cpu,timer_slack";
 replace_line init.rc "    write /proc/sys/kernel/sched_rt_runtime_us 950000" "    write /proc/sys/kernel/sched_rt_runtime_us 800000";
 replace_line init.rc "    write /dev/cpuctl/cpu.rt_runtime_us 950000" "    write /dev/cpuctl/cpu.rt_runtime_us 800000";
@@ -76,9 +81,26 @@ replace_line init.qcom.power.rc '    write /sys/devices/system/cpu/cpu0/cpufreq/
 # fstab.qcom
 replace_line fstab.qcom "#/dev/block/zram0                        none               swap     defaults                                                     zramsize=536870912,zramstreams=3" "/dev/block/zram0                        none               swap     defaults                                                     zramsize=335544320,zramstreams=3";
 
+$bin/sepolicy-inject -s init -t rootfs -c file -p execute_no_trans -P sepolicy;
+
 # end ramdisk changes
 
 write_boot;
 
 ## end install
 
+# Add empty profile locations
+if [ ! -d /data/media/Spectrum ]; then
+  ui_print " "; ui_print "Creating /data/media/0/Spectrum...";
+  mkdir /data/media/0/Spectrum;
+fi
+if [ ! -d /data/media/Spectrum/profiles ]; then
+  mkdir /data/media/0/Spectrum/profiles;
+fi
+if [ ! -d /data/media/Spectrum/profiles/*.profile ]; then
+  ui_print " "; ui_print "Creating empty profile files...";
+  touch /data/media/0/Spectrum/profiles/balance.profile;
+  touch /data/media/0/Spectrum/profiles/performance.profile;
+  touch /data/media/0/Spectrum/profiles/battery.profile;
+  touch /data/media/0/Spectrum/profiles/gaming.profile;
+fi
